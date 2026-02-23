@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -283,6 +284,142 @@ func (t *FileTest) TestGeneratorPackedTrailer(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = f.Validate()
 	c.Assert(err, check.IsNil)
+}
+
+func (t *FileTest) TestGeneratorTrailerStatistics(c *check.C) {
+	t.runTrailerTest(c, utils.CharacterFileFormat, &lib.BaseSegment{})
+}
+
+func (t *FileTest) TestGeneratorPackedTrailerStatistics(c *check.C) {
+	t.runTrailerTest(c, utils.PackedFileFormat, &lib.PackedBaseSegment{})
+}
+
+// allAccountStatusCases returns every account status code and the trailer field that should be 1.
+func allAccountStatusCases() []string {
+	return []string{
+		lib.AccountStatusDF,
+		lib.AccountStatusDA,
+		lib.AccountStatus05,
+		lib.AccountStatus11,
+		lib.AccountStatus13,
+		lib.AccountStatus61,
+		lib.AccountStatus62,
+		lib.AccountStatus63,
+		lib.AccountStatus64,
+		lib.AccountStatus65,
+		lib.AccountStatus71,
+		lib.AccountStatus78,
+		lib.AccountStatus80,
+		lib.AccountStatus82,
+		lib.AccountStatus83,
+		lib.AccountStatus84,
+		lib.AccountStatus88,
+		lib.AccountStatus89,
+		lib.AccountStatus93,
+		lib.AccountStatus94,
+		lib.AccountStatus95,
+		lib.AccountStatus96,
+		lib.AccountStatus97,
+	}
+}
+
+func (t *FileTest) TestGeneratorTrailerStatistics(c *check.C) {
+	t.runTrailerTest(c, utils.CharacterFileFormat, &lib.BaseSegment{})
+}
+
+func (t *FileTest) TestGeneratorPackedTrailerStatistics(c *check.C) {
+	t.runTrailerTest(c, utils.PackedFileFormat, &lib.PackedBaseSegment{})
+}
+
+// runTrailerTest is a helper function to test trailer generation for both character and packed file
+// formats using the same logic. It tests for correct counting of account status codes and segment
+// totals in the generated trailer.
+func (t *FileTest) runTrailerTest(c *check.C, format string, baseTemplate interface{}) {
+	f, err := os.Open(filepath.Join("..", "..", "test", "testdata", "trailer_statistics.json"))
+	c.Assert(err, check.IsNil)
+	defer f.Close()
+
+	file, err := NewFile(format)
+	c.Assert(err, check.IsNil)
+
+	base := reflect.New(reflect.TypeOf(baseTemplate).Elem()).Interface()
+	err = json.Unmarshal(utils.ReadFile(f), base) // <--- THIS WAS MISSING
+	c.Assert(err, check.IsNil)
+	baseVal := reflect.ValueOf(base).Elem()
+
+	statusesRequiringPaymentRating := map[string]bool{
+		lib.AccountStatus05: true, lib.AccountStatus13: true, lib.AccountStatus65: true,
+		lib.AccountStatus88: true, lib.AccountStatus89: true, lib.AccountStatus94: true, lib.AccountStatus95: true,
+	}
+
+	// create a base segment for each account status, with corresponding payment rating
+	accountStatuses := allAccountStatusCases()
+	for _, status := range accountStatuses {
+		baseCopyVal := reflect.New(baseVal.Type())
+		baseCopyVal.Elem().Set(baseVal)
+
+		v := baseCopyVal.Elem()
+
+		v.FieldByName("AccountStatus").SetString(status)
+
+		if statusesRequiringPaymentRating[status] {
+			v.FieldByName("PaymentRating").SetString(lib.PaymentRatingCurrent)
+		}
+
+		record := baseCopyVal.Interface().(lib.Record)
+		err = file.AddDataRecord(record)
+		c.Assert(err, check.IsNil)
+	}
+
+	tr, err := file.GeneratorTrailer()
+	c.Assert(err, check.IsNil)
+
+	t.assertTrailerFields(c, tr, len(accountStatuses))
+}
+
+func (t *FileTest) assertTrailerFields(c *check.C, trailer any, numSegments int) {
+	v := reflect.ValueOf(trailer).Elem()
+
+	checkField := func(fieldName string, expected int) {
+		field := v.FieldByName(fieldName)
+		if !field.IsValid() {
+			c.Fatalf("Field %s not found on trailer struct", fieldName)
+		}
+		actual := int(field.Int())
+		c.Check(actual, check.Equals, expected,
+			check.Commentf("Field %s: expected %d, got %d", fieldName, expected, actual))
+	}
+
+	accountStatusFields := []string{
+		"TotalStatusCodeDF", "TotalStatusCodeDA", "TotalStatusCode05", "TotalStatusCode11",
+		"TotalStatusCode13", "TotalStatusCode61", "TotalStatusCode62", "TotalStatusCode63",
+		"TotalStatusCode64", "TotalStatusCode65", "TotalStatusCode71", "TotalStatusCode78",
+		"TotalStatusCode80", "TotalStatusCode82", "TotalStatusCode83", "TotalStatusCode84",
+		"TotalStatusCode88", "TotalStatusCode89", "TotalStatusCode93", "TotalStatusCode94",
+		"TotalStatusCode95", "TotalStatusCode96", "TotalStatusCode97",
+	}
+	for _, f := range accountStatusFields {
+		checkField(f, 1)
+	}
+
+	segmentTotalFields := []string{
+		"TotalBaseRecords", "TotalConsumerSegmentsJ1", "TotalConsumerSegmentsJ2",
+		"TotalOriginalCreditorSegments", "TotalPurchasedToSegments",
+		"TotalMortgageInformationSegments", "TotalPaymentInformationSegments",
+		"TotalChangeSegments", "TotalEmploymentSegments", "TotalSocialNumbersBaseSegments",
+		"TotalSocialNumbersJ1Segments", "TotalSocialNumbersJ2Segments",
+		"TotalDatesBirthBaseSegments", "TotalDatesBirthJ1Segments", "TotalDatesBirthJ2Segments",
+	}
+	for _, f := range segmentTotalFields {
+		checkField(f, numSegments)
+	}
+
+	checkField("BlockCount", numSegments+2)
+
+	// check combined segment fields
+	checkField("TotalECOACodeZ", 3*numSegments)
+	checkField("TotalSocialNumbersAllSegments", 3*numSegments)
+	checkField("TotalTelephoneNumbersAllSegments", 3*numSegments)
 }
 
 func (t *FileTest) TestFileValidate(c *check.C) {
