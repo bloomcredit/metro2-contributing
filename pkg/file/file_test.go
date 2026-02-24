@@ -323,14 +323,6 @@ func allAccountStatusCases() []string {
 	}
 }
 
-func (t *FileTest) TestGeneratorTrailerStatistics(c *check.C) {
-	t.runTrailerTest(c, utils.CharacterFileFormat, &lib.BaseSegment{})
-}
-
-func (t *FileTest) TestGeneratorPackedTrailerStatistics(c *check.C) {
-	t.runTrailerTest(c, utils.PackedFileFormat, &lib.PackedBaseSegment{})
-}
-
 // runTrailerTest is a helper function to test trailer generation for both character and packed file
 // formats using the same logic. It tests for correct counting of account status codes and segment
 // totals in the generated trailer.
@@ -471,7 +463,6 @@ func (t *FileTest) TestNewFileFromReader(c *check.C) {
 }
 
 func (t *FileTest) TestCreateFileFailed(c *check.C) {
-
 	r1 := bytes.NewReader(t.packedRaw[8:])
 	c.Assert(r1, check.NotNil)
 

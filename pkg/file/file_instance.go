@@ -91,44 +91,15 @@ func (f *fileInstance) GetDataRecords() []lib.Record {
 // GeneratorTrailer returns trailer segment that created automatically
 func (f *fileInstance) GeneratorTrailer() (lib.Record, error) {
 	var trailer lib.Record
-	var information *lib.TrailerInformation
 	var err error
 
 	if f.format == utils.PackedFileFormat {
-		trailer = lib.NewPackedTrailerRecord()
-		information, err = f.generatorPackedTrailer()
-		if err != nil {
-			return nil, err
-		}
+		trailer, err = f.generatorPackedTrailer()
 	} else {
-		trailer = lib.NewTrailerRecord()
-		information, err = f.generatorTrailer()
-		if err != nil {
-			return nil, err
-		}
+		trailer, err = f.generatorTrailer()
 	}
-
-	fromFields := reflect.ValueOf(information).Elem()
-	toFields := reflect.ValueOf(trailer).Elem()
-	for i := 0; i < fromFields.NumField(); i++ {
-		fieldName := fromFields.Type().Field(i).Name
-		fromField := fromFields.FieldByName(fieldName)
-		toField := toFields.FieldByName(fieldName)
-		if fromField.IsValid() && toField.CanSet() {
-			toField.Set(fromField)
-		}
-	}
-
-	if f.format == utils.PackedFileFormat {
-		if segment, ok := trailer.(*lib.PackedTrailerRecord); ok {
-			segment.RecordDescriptorWord = lib.PackedRecordLength
-			segment.RecordIdentifier = lib.TrailerIdentifier
-		}
-	} else {
-		if segment, ok := trailer.(*lib.TrailerRecord); ok {
-			segment.RecordDescriptorWord = lib.UnpackedRecordLength
-			segment.RecordIdentifier = lib.TrailerIdentifier
-		}
+	if err != nil {
+		return nil, err
 	}
 
 	return trailer, nil
@@ -159,20 +130,21 @@ func (f *fileInstance) Validate() error {
 		}
 	}
 
-	var information *lib.TrailerInformation
+	var fromFields reflect.Value
 	if f.format == utils.PackedFileFormat {
-		information, err = f.generatorPackedTrailer()
+		trailer, err := f.generatorPackedTrailer()
 		if err != nil {
 			return err
 		}
+		fromFields = reflect.ValueOf(trailer).Elem()
 	} else {
-		information, err = f.generatorTrailer()
+		trailer, err := f.generatorTrailer()
 		if err != nil {
 			return err
 		}
+		fromFields = reflect.ValueOf(trailer).Elem()
 	}
 
-	fromFields := reflect.ValueOf(information).Elem()
 	toFields := reflect.ValueOf(f.Trailer).Elem()
 	for i := 0; i < fromFields.NumField(); i++ {
 		fieldName := fromFields.Type().Field(i).Name
@@ -200,7 +172,6 @@ func (f *fileInstance) Validate() error {
 
 // Parse attempts to initialize a *File object assuming the input is valid raw data.
 func (f *fileInstance) Parse(record []byte, isVariableLength bool) error {
-
 	// remove new lines
 	record = slices.DeleteFunc(record, func(b byte) bool {
 		return b == '\r' || b == '\n'
@@ -487,356 +458,38 @@ func (f *fileInstance) SetType(newType string) error {
 	return nil
 }
 
-func (f *fileInstance) generatorTrailer() (*lib.TrailerInformation, error) {
-	trailer := &lib.TrailerInformation{}
+func (f *fileInstance) generatorTrailer() (*lib.TrailerRecord, error) {
+	trailer := &lib.TrailerRecord{
+		RecordDescriptorWord: lib.UnpackedRecordLength,
+		RecordIdentifier:     lib.TrailerIdentifier,
+		BlockCount:           2,
+	}
 
-	trailer.TotalBaseRecords = len(f.Bases)
-	trailer.BlockCount = len(f.Bases) + 2
 	for _, base := range f.Bases {
 		baseSegment, ok := base.(*lib.BaseSegment)
 		if !ok && baseSegment.Validate() != nil {
 			return nil, utils.NewErrInvalidSegment(baseSegment.Name())
 		}
-
-		if isValidSocialSecurityNumber(baseSegment.SocialSecurityNumber) {
-			trailer.TotalSocialNumbersAllSegments++
-			trailer.TotalSocialNumbersBaseSegments++
-		}
-
-		if !baseSegment.DateBirth.IsZero() {
-			trailer.TotalDatesBirthAllSegments++
-			trailer.TotalDatesBirthBaseSegments++
-		}
-
-		if baseSegment.ECOACode == lib.ECOACodeZ {
-			trailer.TotalECOACodeZ++
-		}
-		if baseSegment.TelephoneNumber > 0 {
-			trailer.TotalTelephoneNumbersAllSegments++
-		}
-		f.statisticAccountStatus(baseSegment.AccountStatus, trailer)
-		f.statisticBase(baseSegment, trailer)
+		trailer.TallyDataRecord(baseSegment)
 	}
 
 	return trailer, nil
 }
 
-func (f *fileInstance) generatorPackedTrailer() (*lib.TrailerInformation, error) {
-	trailer := &lib.TrailerInformation{}
-	trailer.TotalBaseRecords = len(f.Bases)
-	trailer.BlockCount = len(f.Bases) + 2
+func (f *fileInstance) generatorPackedTrailer() (*lib.PackedTrailerRecord, error) {
+	trailer := &lib.PackedTrailerRecord{
+		RecordDescriptorWord: lib.PackedRecordLength,
+		RecordIdentifier:     lib.TrailerIdentifier,
+		BlockCount:           2,
+	}
+
 	for _, base := range f.Bases {
 		base, ok := base.(*lib.PackedBaseSegment)
 		if !ok && base.Validate() != nil {
 			return nil, utils.NewErrInvalidSegment(base.Name())
 		}
-
-		if isValidSocialSecurityNumber(base.SocialSecurityNumber) {
-			trailer.TotalSocialNumbersAllSegments++
-			trailer.TotalSocialNumbersBaseSegments++
-		}
-
-		if !base.DateBirth.IsZero() {
-			trailer.TotalDatesBirthAllSegments++
-			trailer.TotalDatesBirthBaseSegments++
-		}
-
-		if base.ECOACode == lib.ECOACodeZ {
-			trailer.TotalECOACodeZ++
-		}
-
-		if base.TelephoneNumber > 0 {
-			trailer.TotalTelephoneNumbersAllSegments++
-		}
-
-		f.statisticAccountStatus(base.AccountStatus, trailer)
-		f.statisticPackedBase(base, trailer)
+		trailer.TallyDataRecord(base)
 	}
 
 	return trailer, nil
-}
-
-func (f *fileInstance) statisticAccountStatus(status string, info *lib.TrailerInformation) {
-	switch status {
-	case lib.AccountStatusDF:
-		info.TotalStatusCodeDF++
-	case lib.AccountStatusDA:
-		info.TotalStatusCodeDA++
-	case lib.AccountStatus05:
-		info.TotalStatusCode05++
-	case lib.AccountStatus11:
-		info.TotalStatusCode11++
-	case lib.AccountStatus13:
-		info.TotalStatusCode13++
-	case lib.AccountStatus61:
-		info.TotalStatusCode61++
-	case lib.AccountStatus62:
-		info.TotalStatusCode62++
-	case lib.AccountStatus63:
-		info.TotalStatusCode63++
-	case lib.AccountStatus64:
-		info.TotalStatusCode64++
-	case lib.AccountStatus65:
-		info.TotalStatusCode65++
-	case lib.AccountStatus71:
-		info.TotalStatusCode71++
-	case lib.AccountStatus78:
-		info.TotalStatusCode78++
-	case lib.AccountStatus80:
-		info.TotalStatusCode80++
-	case lib.AccountStatus82:
-		info.TotalStatusCode82++
-	case lib.AccountStatus83:
-		info.TotalStatusCode83++
-	case lib.AccountStatus84:
-		info.TotalStatusCode84++
-	case lib.AccountStatus88:
-		info.TotalStatusCode88++
-	case lib.AccountStatus89:
-		info.TotalStatusCode89++
-	case lib.AccountStatus93:
-		info.TotalStatusCode93++
-	case lib.AccountStatus94:
-		info.TotalStatusCode94++
-	case lib.AccountStatus95:
-		info.TotalStatusCode95++
-	case lib.AccountStatus96:
-		info.TotalStatusCode96++
-	case lib.AccountStatus97:
-		info.TotalStatusCode97++
-	}
-}
-
-func (f *fileInstance) statisticPackedBase(base *lib.PackedBaseSegment, trailer *lib.TrailerInformation) {
-	for _, j1 := range base.GetSegments(lib.J1SegmentName) {
-		sub, ok := j1.(*lib.J1Segment)
-		if !ok {
-			continue
-		}
-		if sub.ECOACode == lib.ECOACodeZ {
-			trailer.TotalECOACodeZ++
-		}
-		if sub.Validate() == nil {
-			trailer.TotalConsumerSegmentsJ1++
-
-			if isValidSocialSecurityNumber(sub.SocialSecurityNumber) {
-				trailer.TotalSocialNumbersAllSegments++
-				trailer.TotalSocialNumbersJ1Segments++
-			}
-
-			if !sub.DateBirth.IsZero() {
-				trailer.TotalDatesBirthAllSegments++
-				trailer.TotalDatesBirthJ1Segments++
-			}
-
-			if sub.TelephoneNumber > 0 {
-				trailer.TotalTelephoneNumbersAllSegments++
-			}
-		}
-	}
-	for _, j2 := range base.GetSegments(lib.J2SegmentName) {
-		sub, ok := j2.(*lib.J2Segment)
-		if !ok {
-			continue
-		}
-		if sub.ECOACode == lib.ECOACodeZ {
-			trailer.TotalECOACodeZ++
-		}
-		if sub.Validate() == nil {
-			trailer.TotalConsumerSegmentsJ2++
-
-			if isValidSocialSecurityNumber(sub.SocialSecurityNumber) {
-				trailer.TotalSocialNumbersAllSegments++
-				trailer.TotalSocialNumbersJ2Segments++
-			}
-
-			if !sub.DateBirth.IsZero() {
-				trailer.TotalDatesBirthAllSegments++
-				trailer.TotalDatesBirthJ2Segments++
-			}
-
-			if sub.TelephoneNumber > 0 {
-				trailer.TotalTelephoneNumbersAllSegments++
-			}
-		}
-	}
-	for _, k1 := range base.GetSegments(lib.K1SegmentName) {
-		sub, ok := k1.(*lib.K1Segment)
-		if !ok {
-			continue
-		}
-		if len(sub.OriginalCreditorName) > 0 {
-			trailer.TotalOriginalCreditorSegments++
-		}
-	}
-	for _, k2 := range base.GetSegments(lib.K2SegmentName) {
-		sub, ok := k2.(*lib.K2Segment)
-		if !ok {
-			continue
-		}
-		if sub.PurchasedIndicator == lib.PurchasedIndicatorToName ||
-			sub.PurchasedIndicator == lib.PurchasedIndicatorFromName {
-			trailer.TotalPurchasedToSegments++
-		}
-	}
-	for _, k3 := range base.GetSegments(lib.K3SegmentName) {
-		sub, ok := k3.(*lib.K3Segment)
-		if !ok {
-			continue
-		}
-		if sub.AgencyIdentifier == lib.AgencyIdentifierNotApplicable {
-			trailer.TotalMortgageInformationSegments++
-		}
-	}
-	for _, k4 := range base.GetSegments(lib.K4SegmentName) {
-		sub, ok := k4.(*lib.K4Segment)
-		if !ok {
-			continue
-		}
-		if sub.SpecializedPaymentIndicator == lib.SpecializedBalloonPayment ||
-			sub.SpecializedPaymentIndicator == lib.SpecializedDeferredPayment {
-			trailer.TotalPaymentInformationSegments++
-		}
-	}
-	for _, l1 := range base.GetSegments(lib.L1SegmentName) {
-		sub, ok := l1.(*lib.L1Segment)
-		if !ok {
-			continue
-		}
-		if sub.ChangeIndicator == lib.ChangeIndicatorAccountNumber ||
-			sub.ChangeIndicator == lib.ChangeIndicatorIdentificationNumber ||
-			sub.ChangeIndicator == lib.ChangeIndicatorBothNumber {
-			trailer.TotalChangeSegments++
-		}
-	}
-	for _, n1 := range base.GetSegments(lib.N1SegmentName) {
-		sub, ok := n1.(*lib.N1Segment)
-		if !ok {
-			continue
-		}
-		if len(sub.EmployerName) > 0 {
-			trailer.TotalEmploymentSegments++
-		}
-	}
-}
-
-func (f *fileInstance) statisticBase(base *lib.BaseSegment, trailer *lib.TrailerInformation) {
-	for _, j1 := range base.GetSegments(lib.J1SegmentName) {
-		sub, ok := j1.(*lib.J1Segment)
-		if !ok {
-			continue
-		}
-		if sub.ECOACode == lib.ECOACodeZ {
-			trailer.TotalECOACodeZ++
-		}
-		if sub.Validate() == nil {
-			trailer.TotalConsumerSegmentsJ1++
-
-			if isValidSocialSecurityNumber(sub.SocialSecurityNumber) {
-				trailer.TotalSocialNumbersAllSegments++
-				trailer.TotalSocialNumbersJ1Segments++
-			}
-
-			if !sub.DateBirth.IsZero() {
-				trailer.TotalDatesBirthAllSegments++
-				trailer.TotalDatesBirthJ1Segments++
-			}
-
-			if sub.TelephoneNumber > 0 {
-				trailer.TotalTelephoneNumbersAllSegments++
-			}
-		}
-	}
-	for _, j2 := range base.GetSegments(lib.J2SegmentName) {
-		sub, ok := j2.(*lib.J2Segment)
-		if !ok {
-			continue
-		}
-		if sub.ECOACode == lib.ECOACodeZ {
-			trailer.TotalECOACodeZ++
-		}
-		if sub.Validate() == nil {
-			trailer.TotalConsumerSegmentsJ2++
-
-			if isValidSocialSecurityNumber(sub.SocialSecurityNumber) {
-				trailer.TotalSocialNumbersAllSegments++
-				trailer.TotalSocialNumbersJ2Segments++
-			}
-
-			if !sub.DateBirth.IsZero() {
-				trailer.TotalDatesBirthAllSegments++
-				trailer.TotalDatesBirthJ2Segments++
-			}
-
-			if sub.TelephoneNumber > 0 {
-				trailer.TotalTelephoneNumbersAllSegments++
-			}
-		}
-	}
-	for _, k1 := range base.GetSegments(lib.K1SegmentName) {
-		sub, ok := k1.(*lib.K1Segment)
-		if !ok {
-			continue
-		}
-		if len(sub.OriginalCreditorName) > 0 {
-			trailer.TotalOriginalCreditorSegments++
-		}
-	}
-	for _, k2 := range base.GetSegments(lib.K2SegmentName) {
-		sub, ok := k2.(*lib.K2Segment)
-		if !ok {
-			continue
-		}
-		if sub.PurchasedIndicator == lib.PurchasedIndicatorToName ||
-			sub.PurchasedIndicator == lib.PurchasedIndicatorFromName {
-			trailer.TotalPurchasedToSegments++
-		}
-	}
-	for _, k3 := range base.GetSegments(lib.K3SegmentName) {
-		sub, ok := k3.(*lib.K3Segment)
-		if !ok {
-			continue
-		}
-		if sub.AgencyIdentifier == lib.AgencyIdentifierNotApplicable {
-			trailer.TotalMortgageInformationSegments++
-		}
-	}
-	for _, k4 := range base.GetSegments(lib.K4SegmentName) {
-		sub, ok := k4.(*lib.K4Segment)
-		if !ok {
-			continue
-		}
-		if sub.SpecializedPaymentIndicator == lib.SpecializedBalloonPayment ||
-			sub.SpecializedPaymentIndicator == lib.SpecializedDeferredPayment {
-			trailer.TotalPaymentInformationSegments++
-		}
-	}
-	for _, l1 := range base.GetSegments(lib.L1SegmentName) {
-		sub, ok := l1.(*lib.L1Segment)
-		if !ok {
-			continue
-		}
-		if sub.ChangeIndicator == lib.ChangeIndicatorAccountNumber ||
-			sub.ChangeIndicator == lib.ChangeIndicatorIdentificationNumber ||
-			sub.ChangeIndicator == lib.ChangeIndicatorBothNumber {
-			trailer.TotalChangeSegments++
-		}
-	}
-	for _, n1 := range base.GetSegments(lib.N1SegmentName) {
-		sub, ok := n1.(*lib.N1Segment)
-		if !ok {
-			continue
-		}
-		if len(sub.EmployerName) > 0 {
-			trailer.TotalEmploymentSegments++
-		}
-	}
-}
-
-func isValidSocialSecurityNumber(ssn int) bool {
-	// Do not count zero- or 9-filled SSNs.
-	if ssn <= 0 || ssn >= 999999999 {
-		return false
-	}
-	return true
 }
