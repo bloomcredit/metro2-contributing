@@ -24,7 +24,6 @@ import (
 func TestFile__Crashers(t *testing.T) {
 	paths := readCrasherInputFilePaths(t)
 	for i := range paths {
-
 		f, err := os.Open(paths[i])
 		if err != nil {
 			t.Fatal(err)
@@ -73,7 +72,9 @@ func (t *FileTest) TestJsonWithUnpackedVariableBlocked(c *check.C) {
 	err = json.Unmarshal(t.unpackedVariableBlockedJson, f)
 	c.Assert(err, check.IsNil)
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "test", "testdata", "unpacked_variable_file.dat"))
+	raw, err := os.ReadFile(
+		filepath.Join("..", "..", "test", "testdata", "unpacked_variable_file.dat"),
+	)
 	c.Assert(err, check.IsNil)
 
 	rawStr := strings.ReplaceAll(string(raw), "\r\n", "\n")
@@ -412,6 +413,7 @@ func (t *FileTest) assertTrailerFields(c *check.C, trailer any, numSegments int)
 	checkField("TotalECOACodeZ", 3*numSegments)
 	checkField("TotalSocialNumbersAllSegments", 3*numSegments)
 	checkField("TotalTelephoneNumbersAllSegments", 3*numSegments)
+	checkField("TotalDatesBirthAllSegments", 3*numSegments)
 }
 
 func (t *FileTest) TestFileValidate(c *check.C) {
