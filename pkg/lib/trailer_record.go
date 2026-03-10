@@ -19,7 +19,6 @@ var _ Segment = (*PackedTrailerRecord)(nil)
 
 // TrailerRecord holds the trailer record
 type TrailerRecord struct {
-
 	// Contains a value equal to the length of the physical record. This value includes the four bytes reserved for this field.
 	// If fixed-length records are being reported, the Trailer Record should be the same length as all the data records.
 	// The Trailer Record should be padded with blanks to fill the needed number of positions.
@@ -237,6 +236,200 @@ func (r *TrailerRecord) AddApplicableSegment(s Segment) error {
 	return utils.NewErrApplicableSegment("trailer record", s.Name())
 }
 
+// TallyDataRecord updates trailer record fields based on the provided base segment data
+func (r *TrailerRecord) TallyDataRecord(base *BaseSegment) {
+	r.TotalBaseRecords++
+	r.BlockCount++
+	if utils.IsValidSocialSecurityNumber(base.SocialSecurityNumber) {
+		r.TotalSocialNumbersAllSegments++
+		r.TotalSocialNumbersBaseSegments++
+	}
+
+	if !base.DateBirth.IsZero() {
+		r.TotalDatesBirthAllSegments++
+		r.TotalDatesBirthBaseSegments++
+	}
+
+	if base.ECOACode == ECOACodeZ {
+		r.TotalECOACodeZ++
+	}
+
+	if base.TelephoneNumber > 0 {
+		r.TotalTelephoneNumbersAllSegments++
+	}
+
+	r.tallyAccountStatus(base.AccountStatus)
+	r.tallySegments(base)
+}
+
+// tallyAccountStatus updates trailer record account status fields based on the provided account
+// status
+func (r *TrailerRecord) tallyAccountStatus(status string) {
+	switch status {
+	case AccountStatusDF:
+		r.TotalStatusCodeDF++
+	case AccountStatusDA:
+		r.TotalStatusCodeDA++
+	case AccountStatus05:
+		r.TotalStatusCode05++
+	case AccountStatus11:
+		r.TotalStatusCode11++
+	case AccountStatus13:
+		r.TotalStatusCode13++
+	case AccountStatus61:
+		r.TotalStatusCode61++
+	case AccountStatus62:
+		r.TotalStatusCode62++
+	case AccountStatus63:
+		r.TotalStatusCode63++
+	case AccountStatus64:
+		r.TotalStatusCode64++
+	case AccountStatus65:
+		r.TotalStatusCode65++
+	case AccountStatus71:
+		r.TotalStatusCode71++
+	case AccountStatus78:
+		r.TotalStatusCode78++
+	case AccountStatus80:
+		r.TotalStatusCode80++
+	case AccountStatus82:
+		r.TotalStatusCode82++
+	case AccountStatus83:
+		r.TotalStatusCode83++
+	case AccountStatus84:
+		r.TotalStatusCode84++
+	case AccountStatus88:
+		r.TotalStatusCode88++
+	case AccountStatus89:
+		r.TotalStatusCode89++
+	case AccountStatus93:
+		r.TotalStatusCode93++
+	case AccountStatus94:
+		r.TotalStatusCode94++
+	case AccountStatus95:
+		r.TotalStatusCode95++
+	case AccountStatus96:
+		r.TotalStatusCode96++
+	case AccountStatus97:
+		r.TotalStatusCode97++
+	}
+}
+
+// tallySegments updates trailer record segment fields based on the provided base segment and its
+// associated segments (J1, J2, K1, K2, K3, K4, L1, N1)
+func (r *TrailerRecord) tallySegments(base *BaseSegment) {
+	for _, j1 := range base.GetSegments(J1SegmentName) {
+		sub, ok := j1.(*J1Segment)
+		if !ok {
+			continue
+		}
+		if sub.ECOACode == ECOACodeZ {
+			r.TotalECOACodeZ++
+		}
+		if sub.Validate() == nil {
+			r.TotalConsumerSegmentsJ1++
+
+			if utils.IsValidSocialSecurityNumber(sub.SocialSecurityNumber) {
+				r.TotalSocialNumbersAllSegments++
+				r.TotalSocialNumbersJ1Segments++
+			}
+
+			if !sub.DateBirth.IsZero() {
+				r.TotalDatesBirthAllSegments++
+				r.TotalDatesBirthJ1Segments++
+			}
+
+			if sub.TelephoneNumber > 0 {
+				r.TotalTelephoneNumbersAllSegments++
+			}
+		}
+	}
+	for _, j2 := range base.GetSegments(J2SegmentName) {
+		sub, ok := j2.(*J2Segment)
+		if !ok {
+			continue
+		}
+		if sub.ECOACode == ECOACodeZ {
+			r.TotalECOACodeZ++
+		}
+		if sub.Validate() == nil {
+			r.TotalConsumerSegmentsJ2++
+
+			if utils.IsValidSocialSecurityNumber(sub.SocialSecurityNumber) {
+				r.TotalSocialNumbersAllSegments++
+				r.TotalSocialNumbersJ2Segments++
+			}
+
+			if !sub.DateBirth.IsZero() {
+				r.TotalDatesBirthAllSegments++
+				r.TotalDatesBirthJ2Segments++
+			}
+
+			if sub.TelephoneNumber > 0 {
+				r.TotalTelephoneNumbersAllSegments++
+			}
+		}
+	}
+	for _, k1 := range base.GetSegments(K1SegmentName) {
+		sub, ok := k1.(*K1Segment)
+		if !ok {
+			continue
+		}
+		if len(sub.OriginalCreditorName) > 0 {
+			r.TotalOriginalCreditorSegments++
+		}
+	}
+	for _, k2 := range base.GetSegments(K2SegmentName) {
+		sub, ok := k2.(*K2Segment)
+		if !ok {
+			continue
+		}
+		if sub.PurchasedIndicator == PurchasedIndicatorToName ||
+			sub.PurchasedIndicator == PurchasedIndicatorFromName {
+			r.TotalPurchasedToSegments++
+		}
+	}
+	for _, k3 := range base.GetSegments(K3SegmentName) {
+		sub, ok := k3.(*K3Segment)
+		if !ok {
+			continue
+		}
+		if sub.AgencyIdentifier == AgencyIdentifierNotApplicable {
+			r.TotalMortgageInformationSegments++
+		}
+	}
+	for _, k4 := range base.GetSegments(K4SegmentName) {
+		sub, ok := k4.(*K4Segment)
+		if !ok {
+			continue
+		}
+		if sub.SpecializedPaymentIndicator == SpecializedBalloonPayment ||
+			sub.SpecializedPaymentIndicator == SpecializedDeferredPayment {
+			r.TotalPaymentInformationSegments++
+		}
+	}
+	for _, l1 := range base.GetSegments(L1SegmentName) {
+		sub, ok := l1.(*L1Segment)
+		if !ok {
+			continue
+		}
+		if sub.ChangeIndicator == ChangeIndicatorAccountNumber ||
+			sub.ChangeIndicator == ChangeIndicatorIdentificationNumber ||
+			sub.ChangeIndicator == ChangeIndicatorBothNumber {
+			r.TotalChangeSegments++
+		}
+	}
+	for _, n1 := range base.GetSegments(N1SegmentName) {
+		sub, ok := n1.(*N1Segment)
+		if !ok {
+			continue
+		}
+		if len(sub.EmployerName) > 0 {
+			r.TotalEmploymentSegments++
+		}
+	}
+}
+
 // PackedTrailerRecord holds the packed trailer record
 type PackedTrailerRecord TrailerRecord
 
@@ -348,4 +541,198 @@ func (r *PackedTrailerRecord) GetSegments(string) []Segment {
 // AddApplicableSegment will add new applicable segment into record
 func (r *PackedTrailerRecord) AddApplicableSegment(s Segment) error {
 	return utils.NewErrApplicableSegment("packed header record", s.Name())
+}
+
+// TallyDataRecord updates trailer record fields based on the provided base segment data
+func (r *PackedTrailerRecord) TallyDataRecord(base *PackedBaseSegment) {
+	r.TotalBaseRecords++
+	r.BlockCount++
+	if utils.IsValidSocialSecurityNumber(base.SocialSecurityNumber) {
+		r.TotalSocialNumbersAllSegments++
+		r.TotalSocialNumbersBaseSegments++
+	}
+
+	if !base.DateBirth.IsZero() {
+		r.TotalDatesBirthAllSegments++
+		r.TotalDatesBirthBaseSegments++
+	}
+
+	if base.ECOACode == ECOACodeZ {
+		r.TotalECOACodeZ++
+	}
+
+	if base.TelephoneNumber > 0 {
+		r.TotalTelephoneNumbersAllSegments++
+	}
+
+	r.tallyAccountStatus(base.AccountStatus)
+	r.tallySegments(base)
+}
+
+// tallyAccountStatus updates trailer record account status fields based on the provided account
+// status
+func (r *PackedTrailerRecord) tallyAccountStatus(status string) {
+	switch status {
+	case AccountStatusDF:
+		r.TotalStatusCodeDF++
+	case AccountStatusDA:
+		r.TotalStatusCodeDA++
+	case AccountStatus05:
+		r.TotalStatusCode05++
+	case AccountStatus11:
+		r.TotalStatusCode11++
+	case AccountStatus13:
+		r.TotalStatusCode13++
+	case AccountStatus61:
+		r.TotalStatusCode61++
+	case AccountStatus62:
+		r.TotalStatusCode62++
+	case AccountStatus63:
+		r.TotalStatusCode63++
+	case AccountStatus64:
+		r.TotalStatusCode64++
+	case AccountStatus65:
+		r.TotalStatusCode65++
+	case AccountStatus71:
+		r.TotalStatusCode71++
+	case AccountStatus78:
+		r.TotalStatusCode78++
+	case AccountStatus80:
+		r.TotalStatusCode80++
+	case AccountStatus82:
+		r.TotalStatusCode82++
+	case AccountStatus83:
+		r.TotalStatusCode83++
+	case AccountStatus84:
+		r.TotalStatusCode84++
+	case AccountStatus88:
+		r.TotalStatusCode88++
+	case AccountStatus89:
+		r.TotalStatusCode89++
+	case AccountStatus93:
+		r.TotalStatusCode93++
+	case AccountStatus94:
+		r.TotalStatusCode94++
+	case AccountStatus95:
+		r.TotalStatusCode95++
+	case AccountStatus96:
+		r.TotalStatusCode96++
+	case AccountStatus97:
+		r.TotalStatusCode97++
+	}
+}
+
+// tallySegments updates trailer record segment fields based on the provided base segment and its
+// associated segments (J1, J2, K1, K2, K3, K4, L1, N1)
+func (r *PackedTrailerRecord) tallySegments(base *PackedBaseSegment) {
+	for _, j1 := range base.GetSegments(J1SegmentName) {
+		sub, ok := j1.(*J1Segment)
+		if !ok {
+			continue
+		}
+		if sub.ECOACode == ECOACodeZ {
+			r.TotalECOACodeZ++
+		}
+		if sub.Validate() == nil {
+			r.TotalConsumerSegmentsJ1++
+
+			if utils.IsValidSocialSecurityNumber(sub.SocialSecurityNumber) {
+				r.TotalSocialNumbersAllSegments++
+				r.TotalSocialNumbersJ1Segments++
+			}
+
+			if !sub.DateBirth.IsZero() {
+				r.TotalDatesBirthAllSegments++
+				r.TotalDatesBirthJ1Segments++
+			}
+
+			if sub.TelephoneNumber > 0 {
+				r.TotalTelephoneNumbersAllSegments++
+			}
+		}
+	}
+	for _, j2 := range base.GetSegments(J2SegmentName) {
+		sub, ok := j2.(*J2Segment)
+		if !ok {
+			continue
+		}
+		if sub.ECOACode == ECOACodeZ {
+			r.TotalECOACodeZ++
+		}
+		if sub.Validate() == nil {
+			r.TotalConsumerSegmentsJ2++
+
+			if utils.IsValidSocialSecurityNumber(sub.SocialSecurityNumber) {
+				r.TotalSocialNumbersAllSegments++
+				r.TotalSocialNumbersJ2Segments++
+			}
+
+			if !sub.DateBirth.IsZero() {
+				r.TotalDatesBirthAllSegments++
+				r.TotalDatesBirthJ2Segments++
+			}
+
+			if sub.TelephoneNumber > 0 {
+				r.TotalTelephoneNumbersAllSegments++
+			}
+		}
+	}
+	for _, k1 := range base.GetSegments(K1SegmentName) {
+		sub, ok := k1.(*K1Segment)
+		if !ok {
+			continue
+		}
+		if len(sub.OriginalCreditorName) > 0 {
+			r.TotalOriginalCreditorSegments++
+		}
+	}
+	for _, k2 := range base.GetSegments(K2SegmentName) {
+		sub, ok := k2.(*K2Segment)
+		if !ok {
+			continue
+		}
+		if sub.PurchasedIndicator == PurchasedIndicatorToName ||
+			sub.PurchasedIndicator == PurchasedIndicatorFromName {
+			r.TotalPurchasedToSegments++
+		}
+	}
+	for _, k3 := range base.GetSegments(K3SegmentName) {
+		sub, ok := k3.(*K3Segment)
+		if !ok {
+			continue
+		}
+		if sub.AgencyIdentifier == AgencyIdentifierNotApplicable {
+			r.TotalMortgageInformationSegments++
+		}
+	}
+	for _, k4 := range base.GetSegments(K4SegmentName) {
+		sub, ok := k4.(*K4Segment)
+		if !ok {
+			continue
+		}
+		if sub.SpecializedPaymentIndicator == SpecializedBalloonPayment ||
+			sub.SpecializedPaymentIndicator == SpecializedDeferredPayment {
+			r.TotalPaymentInformationSegments++
+		}
+	}
+	for _, l1 := range base.GetSegments(L1SegmentName) {
+		sub, ok := l1.(*L1Segment)
+		if !ok {
+			continue
+		}
+		if sub.ChangeIndicator == ChangeIndicatorAccountNumber ||
+			sub.ChangeIndicator == ChangeIndicatorIdentificationNumber ||
+			sub.ChangeIndicator == ChangeIndicatorBothNumber {
+			r.TotalChangeSegments++
+		}
+	}
+	for _, n1 := range base.GetSegments(N1SegmentName) {
+		sub, ok := n1.(*N1Segment)
+		if !ok {
+			continue
+		}
+		if len(sub.EmployerName) > 0 {
+			r.TotalEmploymentSegments++
+		}
+	}
 }
